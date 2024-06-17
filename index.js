@@ -5,7 +5,7 @@ const server = new SMTPServer({
   secure: false,
   //key: fs.readFileSync("/home/linuxuser/certs/privkey.pem"),
   //cert: fs.readFileSync("/home/linuxuser/certs/fullchain.pem"),
-  name: 'mail.amtraker.com',
+  name: '0.0.0.0',
   banner: 'amogus???',
   authMethods: [],
   disabledCommands: ['AUTH', 'STARTTLS'],
