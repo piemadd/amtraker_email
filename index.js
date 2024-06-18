@@ -97,14 +97,14 @@ const fetchAndProcessEmails = async () => {
 
       const actualMatches = messageMatches ?? subjectMatches; //we need at least one to match
 
-      if (actualMatches == null) { //message has no valid input, deleting it        
+      if (actualMatches == null) { //message has no valid input, deleting it
         transport.sendMail({
           from: 'status@amtraker.com',
           to: message.target,
-          subject: message.subject ?? `Amtrak ${trainNum}`,
+          subject: message.subject ?? `Amtrak Unkown Train Number`,
           text:`Unknown Train\nWe\'re sorry, your train input seems to be invalid. Please make sure your request is in the "Amtrak {Train Number}" format.\n${timeStampGen()}`,
         }, (err) => {
-          console.log(`Sent message to ${message.target} about ${trainNum}`)
+          console.log(`Sent message to ${message.target} about unknown train number`)
           if (err) console.log(err)
         })
 
@@ -116,7 +116,7 @@ const fetchAndProcessEmails = async () => {
       if (actualMatchesCleaned == null) continue; //this shouldnt happen, but who knows
 
       const trainNum = actualMatchesCleaned[0];
-      const trainNumAct = trainNum.split('-')[0];
+      //const trainNumAct = trainNum.split('-')[0];
 
       const builtMessage = await buildResponse(trainNum);
 
