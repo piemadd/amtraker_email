@@ -64,6 +64,11 @@ const fetchAndProcessEmails = async () => {
 
       let final = undefined;
 
+      if (!msg.bodyStructure.childNodes) {
+        //need to emulate it
+        msg.bodyStructure.childNodes = [msg.bodyStructure];
+      }
+
       //only need the first text/plain
       for await (let childNode of msg.bodyStructure.childNodes) {
         //we want the text/plain if possible, but we'll take some HTML if plaintext isn't there
@@ -84,7 +89,7 @@ const fetchAndProcessEmails = async () => {
 
     //getting the actual messages
     for await (let message of messages) {
-      const res = await imapClient.download(message.uid, message.part, { uid: true })
+      const res = await imapClient.download(message.uid, message.part ?? '1', { uid: true })
 
       const messageStr = await streamToString(res.content);
       const messageMatches = inputRegex.exec(messageStr);
