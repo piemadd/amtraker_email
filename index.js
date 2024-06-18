@@ -1,110 +1,145 @@
-const SMTPServer = require('smtp-server').SMTPServer;
+const nodemailer = require('nodemailer');
+const { ImapFlow } = require('imapflow');
+const fs = require('fs');
+const { timeStampGen, streamToString, buildResponse } = require('./extras.js');
 
-const SERVER_PORT = 4650;
-const SERVER_HOST = false;
+require('dotenv').config();
 
-// Connect to this example server by running
-//   telnet localhost 2525
-// or
-//   nc -c localhost 2525
+const inputRegex = /Amtrak[\n\r\s]+\d+(-\d+)?/;
+const lastNumberRegex = /\d+(-\d+)?$/;
 
-// Authenticate with this command (username is 'testuser' and password is 'testpass')
-//   AUTH PLAIN dGVzdHVzZXIAdGVzdHVzZXIAdGVzdHBhc3M=
+let globalLock = false;
 
-// Setup server
-const server = new SMTPServer({
-    // log to console
-    logger: true,
-    secure: false,
+const transport = nodemailer.createTransport({
+  pool: true,
+  host: "mx1.amtraker.com",
+  port: 465,
+  secure: true, // use TLS
+  auth: {
+    user: "status@amtraker.com",
+    pass: process.env.EMAIL_PASS,
+  },
+  dkim: {
+    domainName: "amtraker.com",
+    keySelector: "mx1",
+    privateKey: process.env.DKIM_PRIV
+  }
+});
 
-    // not required but nice-to-have
-    banner: 'Welcome to My Awesome SMTP Server',
+const fetchAndProcessEmails = async () => {
+  if (globalLock === true) {
+    console.log('Update already in process, exiting')
+    return; //cant update multiple times at once
+  }
+  globalLock = true;
 
-    // disable STARTTLS to allow authentication in clear text mode
-    disabledCommands: ['AUTH', 'STARTTLS'],
+  console.log('Checking for new emails');
 
-    // By default only PLAIN and LOGIN are enabled
-    authMethods: ['PLAIN', 'LOGIN', 'CRAM-MD5'],
-
-    // Accept messages up to 10 MB
-    size: 10 * 1024 * 1024,
-
-    // allow overriding connection properties. Only makes sense behind proxy
-    useXClient: true,
-
-    hidePIPELINING: true,
-
-    // use logging of proxied client data. Only makes sense behind proxy
-    useXForward: true,
-
-    // Setup authentication
-    // Allow only users with username 'testuser' and password 'testpass'
-    onAuth(auth, session, callback) {
-        let username = 'testuser';
-        let password = 'testpass';
-
-        // check username and password
-        if (
-            auth.username === username &&
-            (auth.method === 'CRAM-MD5'
-                ? auth.validatePassword(password) // if cram-md5, validate challenge response
-                : auth.password === password) // for other methods match plaintext passwords
-        ) {
-            return callback(null, {
-                user: 'userdata' // value could be an user id, or an user object etc. This value can be accessed from session.user afterwards
-            });
-        }
-
-        return callback(new Error('Authentication failed'));
+  const imapClient = new ImapFlow({
+    host: 'mx1.amtraker.com',
+    port: 993,
+    secure: true,
+    auth: {
+      user: 'status@amtraker.com',
+      pass: process.env.EMAIL_PASS
     },
+    logger: false
+  });
 
-    // Validate MAIL FROM envelope address. Example allows all addresses that do not start with 'deny'
-    // If this method is not set, all addresses are allowed
-    onMailFrom(address, session, callback) {
-        if (/^deny/i.test(address.address)) {
-            return callback(new Error('Not accepted'));
+  await imapClient.connect()
+
+  //let mailboxLock = await imapClient.getMailboxLock('INBOX');
+  const mailbox = await imapClient.mailboxOpen('INBOX');
+
+  if (mailbox.exists <= 0) { // no email
+    console.log('No emails to check')
+    globalLock = false;
+    return;
+  }
+
+  try {
+    //getting message IDs
+    let messages = [];
+    for await (let msg of imapClient.fetch('1:*', { uid: true, bodyStructure: true, envelope: true, source: false })) {
+
+      let final = undefined;
+
+      //only need the first text/plain
+      for await (let childNode of msg.bodyStructure.childNodes) {
+        //we want the text/plain if possible, but we'll take some HTML if plaintext isn't there
+        if (childNode.type === 'text/plain' || (childNode.type === 'text/html' && final === undefined)) {
+          final = childNode.part;
         }
-        callback();
-    },
+      }
 
-    // Validate RCPT TO envelope address. Example allows all addresses that do not start with 'deny'
-    // If this method is not set, all addresses are allowed
-    onRcptTo(address, session, callback) {
-        let err;
-
-        if (/^deny/i.test(address.address)) {
-            return callback(new Error('Not accepted'));
-        }
-
-        // Reject messages larger than 100 bytes to an over-quota user
-        if (address.address.toLowerCase() === 'almost-full@example.com' && Number(session.envelope.mailFrom.args.SIZE) > 100) {
-            err = new Error('Insufficient channel storage: ' + address.address);
-            err.responseCode = 452;
-            return callback(err);
-        }
-
-        callback();
-    },
-
-    // Handle message stream
-    onData(stream, session, callback) {
-        stream.pipe(process.stdout);
-        stream.on('end', () => {
-            let err;
-            if (stream.sizeExceeded) {
-                err = new Error('Error: message exceeds fixed maximum message size 10 MB');
-                err.responseCode = 552;
-                return callback(err);
-            }
-            callback(null, 'Message queued as abcdef'); // accept the message once the stream is ended
-        });
+      messages.push({
+        uid: msg.uid,
+        part: final,
+        target: msg.envelope.from[0].address,
+        subject: msg.envelope.subject,
+      })
     }
-});
 
-server.on('error', err => {
-    console.log('Error occurred');
-    console.log(err);
-});
+    console.log('New mail!!')
 
-// start listening
-server.listen(SERVER_PORT, SERVER_HOST);
+    //getting the actual messages
+    for await (let message of messages) {
+      const res = await imapClient.download(message.uid, message.part, { uid: true })
+
+      console.log(message)
+
+      const messageStr = await streamToString(res.content);
+      const messageMatches = inputRegex.exec(messageStr);
+      const subjectMatches = inputRegex.exec(res.subject);
+
+      const actualMatches = messageMatches ?? subjectMatches; //we need at least one to match
+
+      if (actualMatches == null) { //message has no valid input, deleting it        
+        transport.sendMail({
+          from: 'status@amtraker.com',
+          to: message.target,
+          subject: message.subject ?? `Amtrak ${trainNum}`,
+          text:`Unknown Train\nWe\'re sorry, your train input seems to be invalid. Please make sure your request is in the "Amtrak {Train Number}" format.\n${timeStampGen()}`,
+        }, (err) => {
+          console.log(`Sent message to ${message.target} about ${trainNum}`)
+          if (err) console.log(err)
+        })
+
+        await imapClient.messageDelete(message.uid, { uid: true });
+        continue;
+      }
+
+      const actualMatchesCleaned = lastNumberRegex.exec(actualMatches[0]);
+      if (actualMatchesCleaned == null) continue; //this shouldnt happen, but who knows
+
+      const trainNum = actualMatchesCleaned[0];
+      const trainNumAct = trainNum.split('-')[0];
+
+      const builtMessage = await buildResponse(trainNum);
+
+      transport.sendMail({
+        from: 'status@amtraker.com',
+        to: message.target,
+        subject: message.subject ?? `Amtrak ${trainNum}`,
+        text: builtMessage,
+      }, (err) => {
+        console.log(`Sent message to ${message.target} about ${trainNum}`)
+        if (err) console.log(err)
+      })
+
+      await imapClient.messageDelete(message.uid, { uid: true });
+    }
+  } catch (e) {
+    console.log(e)
+    console.log('Error getting new email, probably no new mail:', e.toString())
+  } finally {
+    await imapClient.logout();
+    globalLock = false;
+  }
+}
+
+fetchAndProcessEmails().catch(err => console.error(err));
+
+setInterval(() => {
+  fetchAndProcessEmails().catch(err => console.error(err))
+}, 5000) //check for emails and process every ~~5~~ 30 seconds
