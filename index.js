@@ -33,7 +33,7 @@ const fetchAndProcessEmails = async () => {
   }
   globalLock = true;
 
-  console.log('Checking for new emails');
+  //console.log('Checking for new emails');
 
   const imapClient = new ImapFlow({
     host: 'mx1.amtraker.com',
@@ -52,7 +52,7 @@ const fetchAndProcessEmails = async () => {
   const mailbox = await imapClient.mailboxOpen('INBOX');
 
   if (mailbox.exists <= 0) { // no email
-    console.log('No emails to check')
+    //console.log('No emails to check')
     globalLock = false;
     return;
   }
@@ -80,7 +80,7 @@ const fetchAndProcessEmails = async () => {
       })
     }
 
-    console.log('New mail!!')
+    //console.log('New mail!!')
 
     //getting the actual messages
     for await (let message of messages) {
