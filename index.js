@@ -86,11 +86,9 @@ const fetchAndProcessEmails = async () => {
     for await (let message of messages) {
       const res = await imapClient.download(message.uid, message.part, { uid: true })
 
-      console.log(message)
-
       const messageStr = await streamToString(res.content);
       const messageMatches = inputRegex.exec(messageStr);
-      const subjectMatches = inputRegex.exec(res.subject);
+      const subjectMatches = inputRegex.exec(message.subject);
 
       const actualMatches = messageMatches ?? subjectMatches; //we need at least one to match
 
