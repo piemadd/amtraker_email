@@ -77,7 +77,7 @@ const buildResponse = async (trainNum) => {
   // building a successful response
   const filteredStations = realData[0].stations.filter((s) => s.status === 'Enroute');
   const stationsOut = filteredStations.map((station) => {
-    return `${station.code} - ${timeStampGen(new Date(station.arr), station.tz)} (${hoursAndMinutesDiff(station.schArr, station.arr)})`
+    return `${station.code} - ${station.arr ? timeStampGen(new Date(station.arr), station.tz) : timeStampGen(new Date(station.schArr), station.tz)} (${station.arr ? hoursAndMinutesDiff(station.schArr, station.arr) : "Scheduled, No ETA"})`
   });
 
   return `${realData[0].routeName} Train\n${stationsOut.join('\n')}\n${timeStampGen(new Date(), filteredStations[0].tz)}`;
